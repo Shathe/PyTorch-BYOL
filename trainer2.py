@@ -17,7 +17,8 @@ class BYOLTrainer:
         self.optimizer = optimizer
         self.device = device
         self.predictor = predictor
-        self.max_epochs = params['max_epochs']
+        self.accumulation_steps = params['accumulation_steps']
+        self.max_epochs = params['max_epochs'] * self.accumulation_steps
         self.writer = SummaryWriter()
         self.m = params['m']
         self.m_initial = params['m']
@@ -63,6 +64,9 @@ class BYOLTrainer:
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size,
                                   num_workers=self.num_workers, drop_last=False, shuffle=True)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, self.max_epochs, eta_min=0.0005, last_epoch=-1)
+        swa_scheduler = SWALR(self.optimizer, swa_lr=0.05)
+        online_swa = AveragedModel(self.online_network)
+        predictor_swa = AveragedModel(self.predictor)
 
         swa_start = 200
 
@@ -78,14 +82,25 @@ class BYOLTrainer:
                 batch_view_1 = batch_view_1.to(self.device)
                 batch_view_2 = batch_view_2.to(self.device)
 
+                print(batch_view_1.shape)
+
                 loss = self.update(batch_view_1, batch_view_2)
                 self.writer.add_scalar('loss', loss, global_step=niter)
 
+                loss = loss / self.accumulation_steps  # Normalize our loss (if averaged)
                 loss.backward()
 
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-                self._update_target_network_parameters()  # update the key encoder
+                if (niter+1) % self.accumulation_steps == 0:
+                    # torch.nn.utils.clip_grad_norm_(list(self.online_network.parameters()) + list(self.predictor.parameters()), max_norm=0.5)
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+
+                    self._update_target_network_parameters()  # update the key encoder
+
+                if epoch_counter > swa_start:
+                    online_swa.update_parameters(self.online_network)
+                    predictor_swa.update_parameters(self.predictor)
+                    swa_scheduler.step()
 
                 niter += 1
 
@@ -94,6 +109,13 @@ class BYOLTrainer:
             self.m = 1 - (1 - self.m_initial) * (math.cos(math.pi * epoch_counter / self.max_epochs) + 1) / 2
             self.save_model(os.path.join(model_checkpoints_folder, 'model.pth'))
 
+        # Update bn statistics for the swa_model at the end
+        for (batch_view_1, _), _ in train_loader:
+            batch_view_1 = batch_view_1.to(self.device)
+            _ = online_swa.forward(batch_view_1)
+
+        # save checkpoints
+        self.save_model(os.path.join(model_checkpoints_folder, 'model.pth'), save_swa=True, swa=online_swa)
 
     def off_diagonal(self, x):
         # return a flattened view of the off-diagonal elements of a square matrix
@@ -133,14 +155,15 @@ class BYOLTrainer:
 
         # compute key features
         with torch.no_grad():  # teacher/target netowrk
+            # TODO: use here momentum BN in all the network
             targets_to_view_2 = self.target_network(batch_view_1).detach()
             targets_to_view_1 = self.target_network(batch_view_2).detach()
 
-        loss = self.regression_loss(predictions_from_view_1, targets_to_view_1)
-        loss += self.regression_loss(predictions_from_view_2, targets_to_view_2)
+        # loss = self.regression_loss(predictions_from_view_1, targets_to_view_1)
+        # loss += self.regression_loss(predictions_from_view_2, targets_to_view_2)
 
-        # loss = self.regression_loss_with_negatives(predictions_from_view_1, targets_to_view_1)
-        # loss += self.regression_loss_with_negatives(predictions_from_view_2, targets_to_view_2)
+        loss = self.regression_loss_with_negatives(predictions_from_view_1, targets_to_view_1)
+        loss += self.regression_loss_with_negatives(predictions_from_view_2, targets_to_view_2)
 
         return loss.mean()
 

@@ -6,8 +6,8 @@ from torchvision import datasets
 from data.multi_view_data_injector import MultiViewDataInjector
 from data.transforms import get_simclr_data_transforms, get_simclr_data_transforms_onlyglobal
 from models.mlp_head import MLPHead
-from models.resnet_base_network import ResNet, MLPmixer
-from trainer import BYOLTrainer
+from models.resnet_base_network import ResNet, MLPmixer, ResNet_BN_mom
+from trainer2 import BYOLTrainer
 from CustomData import STL
 
 print(torch.__version__)
@@ -29,8 +29,9 @@ def main():
 
     train_dataset = datasets.STL10('/media/snowflake/Data/', split='train+unlabeled', download=True,
                                    transform=MultiViewDataInjector([data_transform, data_transform2]))
-    # train_dataset = STL("/home/snowflake/Descargas/STL_data/unlabeled_images", 96,
-    #                                  transform=MultiViewDataInjector([data_transform, data_transform2]))
+    # train_dataset = STL(["/home/snowflake/Descargas/STL_data/unlabeled_images",
+    #                      "/home/snowflake/Descargas/STL_data/train_images"],
+    #                       transform=MultiViewDataInjector([data_transform, data_transform2]))
 
 
 
@@ -39,6 +40,7 @@ def main():
     # online_network = MLPmixer(**config['network']).to(device)
 
     # target encoder
+    # target_network = ResNet_BN_mom(**config['network']).to(device)
     target_network = ResNet(**config['network']).to(device)
     # target_network = MLPmixer(**config['network']).to(device)
 
