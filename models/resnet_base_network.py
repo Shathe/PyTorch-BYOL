@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from torch import nn
 from einops.layers.torch import Rearrange
-from models.mlp_head import MLPHead, MLPHead_pl, MLPHead_BNM
+from models.mlp_head import MLPHead, MLPHead_pl, MLPHead_BNM, MLPHead_DINO
 import pytorch_lightning as pl
 from models import resnet_bnm
 
@@ -37,7 +37,7 @@ class ResNet(torch.nn.Module):
             resnet = models.resnet50(pretrained=False)
 
         self.encoder = torch.nn.Sequential(*list(resnet.children())[:-1])
-        self.projetion = MLPHead(in_channels=resnet.fc.in_features, **kwargs['projection_head'])
+        self.projetion = MLPHead_DINO(in_channels=resnet.fc.in_features, **kwargs['projection_head'])
 
     def forward(self, x):
         h = self.encoder(x)
